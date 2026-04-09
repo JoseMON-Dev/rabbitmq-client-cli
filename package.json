@@ -1,0 +1,6 @@
+{
+  "name": "rabbit-load-tool",
+  "version": "1.0.0",
+  "description": "Deno RabbitMQ TUI Load Tool",
+  "main": "rabbit.ts"
+}
