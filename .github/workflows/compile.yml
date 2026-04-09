@@ -2,8 +2,8 @@ name: Compile and Release Rabbit
 
 on:
   push:
-    tags:
-      - 'v*' # Se activa cuando creas un tag como v1.0.0
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -34,8 +34,10 @@ jobs:
           files: |
             rabbit-linux
             rabbit-windows.exe
-          name: Release ${{ github.ref_name }}
+          tag_name: latest
+          name: Latest Build
           draft: false
           prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
