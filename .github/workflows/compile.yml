@@ -1,17 +1,17 @@
-name: Compile Rabbit
+name: Compile and Release Rabbit
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+    tags:
+      - 'v*' # Se activa cuando creas un tag como v1.0.0
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -28,10 +28,14 @@ jobs:
       - name: Compile for Windows
         run: deno compile --no-check --target x86_64-pc-windows-msvc --output rabbit-windows.exe rabbit.ts
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
         with:
-          name: compiled-binaries
-          path: |
+          files: |
             rabbit-linux
             rabbit-windows.exe
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
