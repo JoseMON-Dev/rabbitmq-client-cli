@@ -14,7 +14,7 @@ import { connect } from "https://deno.land/x/amqp@v0.23.1/mod.ts";
 
 // Configuración inicial
 let config = {
-  url: "amqp://guest:guest@localhost:5672",
+  url: "amqp://admin:admin@localhost:5672",
   queue: "deno_load_test_queue",
   burstSize: 50
 };
@@ -27,6 +27,7 @@ let connection: any;
 let channel: any;
 let isRunning = true;
 let isPrompting = false; // Bloquea el renderizado mientras se pide un input
+let consumerTag: string | null = null; // Guarda el tag del consumidor activo
 
 /**
  * Fase de configuración inicial
@@ -113,6 +114,14 @@ function render() {
     .render();
 
   console.log(`${colors.gray("Cola:")} ${colors.white(config.queue)} ${colors.dim("(Durable: true)")}`);
+  
+  // Indicador visual de si está escuchando o no
+  if (consumerTag) {
+    console.log(colors.bgGreen.black(" 🎧 ESCUCHANDO MENSAJES "));
+  } else {
+    console.log(colors.bgRed.white(" 🔇 RECEPCIÓN PAUSADA "));
+  }
+
   console.log(colors.bold("\nLogs de Actividad:"));
   logs.forEach(l => console.log(l));
 
@@ -189,29 +198,52 @@ async function promptJsonLoad() {
 }
 
 /**
- * Consumidor
+ * Iniciar el Consumidor
  */
 async function startConsuming() {
-  if (!channel) return;
-  await channel.consume(
-    { queue: config.queue },
-    async (args: any, _props: any, data: Uint8Array) => {
-      const message = new TextDecoder().decode(data);
-      stats.received++;
+  if (!channel || consumerTag) return; // Evitar múltiples suscripciones simultáneas
+  
+  try {
+    const response = await channel.consume(
+      { queue: config.queue },
+      async (args: any, _props: any, data: Uint8Array) => {
+        const message = new TextDecoder().decode(data);
+        stats.received++;
 
-      if (stats.received % 10 === 0 || mode === "CONSUMER") {
-          try {
-            // Intentar parsear para mostrar algo bonito si es JSON
-            const parsed = JSON.parse(message);
-            addLog(colors.blue(`📥 Recibido JSON (ID: ${parsed.id || '?'})`));
-          } catch {
-            addLog(colors.blue(`📥 Recibido: ${message.substring(0, 15)}...`));
-          }
+        try {
+          // Intentar parsear para mostrar algo bonito si es JSON
+          const parsed = JSON.parse(message);
+          addLog(colors.blue(`📥 Recibido JSON (ID: ${parsed.id || '?'})`));
+        } catch {
+          addLog(colors.blue(`📥 Recibido: ${message.substring(0, 15)}...`));
+        }
+
+        await channel.ack({ deliveryTag: args.deliveryTag });
+        render();
       }
-      await channel.ack({ deliveryTag: args.deliveryTag });
-      render();
-    }
-  );
+    );
+    
+    // Guardamos el tag para poder cancelarlo después
+    consumerTag = response.consumerTag;
+    addLog(colors.green("▶️ Consumidor activado"));
+  } catch (error) {
+    addLog(colors.red(`❌ Error al iniciar consumidor: ${error.message}`));
+  }
+}
+
+/**
+ * Detener el Consumidor
+ */
+async function stopConsuming() {
+  if (!channel || !consumerTag) return;
+  
+  try {
+    await channel.cancel({ consumerTag });
+    consumerTag = null;
+    addLog(colors.yellow("⏸️ Consumidor desconectado"));
+  } catch (error) {
+    addLog(colors.red(`❌ Error al detener consumidor: ${error.message}`));
+  }
 }
 
 /**
@@ -220,7 +252,11 @@ async function startConsuming() {
 async function main() {
   await setupConfig();
   await initRabbit();
-  await startConsuming();
+  
+  // Inicia escuchando por defecto porque el modo inicial es CONSUMER
+  if (mode === "CONSUMER") {
+    await startConsuming();
+  }
 
   // Input listener
   (async () => {
@@ -235,24 +271,28 @@ async function main() {
 
         switch (event.key) {
           case "p":
-            mode = "PRODUCER";
-            addLog("Cambiado a modo PRODUCTOR");
+            if (mode !== "PRODUCER") {
+              mode = "PRODUCER";
+              await stopConsuming(); // Dejamos de escuchar
+            }
             break;
           case "c":
-            mode = "CONSUMER";
-            addLog("Cambiado a modo CONSUMIDOR");
+            if (mode !== "CONSUMER") {
+              mode = "CONSUMER";
+              await startConsuming(); // Volvemos a escuchar
+            }
             break;
           case "s":
             if (mode === "PRODUCER") await sendMessages(undefined, 1);
-            else addLog(colors.yellow("⚠️ Cambia a modo Productor"));
+            else addLog(colors.yellow("⚠️ Cambia a modo Productor primero"));
             break;
           case "b":
             if (mode === "PRODUCER") await sendMessages(undefined, config.burstSize);
-            else addLog(colors.yellow("⚠️ Cambia a modo Productor"));
+            else addLog(colors.yellow("⚠️ Cambia a modo Productor primero"));
             break;
           case "l":
             if (mode === "PRODUCER") await promptJsonLoad();
-            else addLog(colors.yellow("⚠️ Cambia a modo Productor"));
+            else addLog(colors.yellow("⚠️ Cambia a modo Productor primero"));
             break;
           case "r":
             stats.sent = 0;
